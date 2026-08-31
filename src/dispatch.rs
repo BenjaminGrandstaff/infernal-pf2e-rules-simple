@@ -22,6 +22,26 @@
 //! Confidence range and `parser_version` presence are validated one
 //! layer down, in `domain::AdmissionRepository::admit_candidate` --
 //! those are domain admission rules, not wire-parsing rules.
+//!
+//! ## Reserved Material: one narrow, honest check
+//!
+//! `possessive_reserved_material_reason` catches exactly the pattern
+//! ORC's own guidance calls out by name: a possessive proper-noun
+//! prefix on `name` (its example: "Bimbol's Bursting Bunion", which a
+//! licensee is told to rewrite as "Bursting Bunion"). A match holds the
+//! candidate for human review (`AdmissionRepository::hold_candidate`)
+//! rather than auto-stripping and admitting it -- rewriting a
+//! candidate's content on the book's behalf without a human confirming
+//! the result is exactly the "guess dressed up as a fact"
+//! `infernal-pf2e-parser-simple`'s own `parser.rs` disclaims for
+//! parsing, and this service extends the same standard to admission.
+//!
+//! This is **not** comprehensive Reserved Material detection. A proper
+//! noun with no possessive marker at all -- a monster literally named
+//! after a setting NPC, a place name, a trademarked term -- passes this
+//! check and is admitted normally. See this repository's
+//! `ORC-NOTICE.md`, "Known limitation: Reserved Material is not yet
+//! filtered", which this one check narrows but does not close.
 
 use uuid::Uuid;
 
@@ -38,6 +58,11 @@ pub enum DispatchOutcome {
         version: i64,
         was_already_processed: bool,
     },
+    Held {
+        held_id: Uuid,
+        reason: String,
+        was_already_processed: bool,
+    },
 }
 
 pub fn dispatch(
@@ -48,15 +73,56 @@ pub fn dispatch(
     match action {
         ADMIT_ACTION => {
             let candidate = parse_scope(scope)?;
-            let outcome = repository.admit_candidate(candidate)?;
-            Ok(DispatchOutcome::Admitted {
-                rule_id: outcome.rule_id,
-                version: outcome.version,
-                was_already_processed: outcome.was_already_processed,
-            })
+            match possessive_reserved_material_reason(&candidate) {
+                Some(reason) => {
+                    let outcome = repository.hold_candidate(candidate, reason.clone())?;
+                    Ok(DispatchOutcome::Held {
+                        held_id: outcome.held_id,
+                        reason,
+                        was_already_processed: outcome.was_already_processed,
+                    })
+                }
+                None => {
+                    let outcome = repository.admit_candidate(candidate)?;
+                    Ok(DispatchOutcome::Admitted {
+                        rule_id: outcome.rule_id,
+                        version: outcome.version,
+                        was_already_processed: outcome.was_already_processed,
+                    })
+                }
+            }
         }
         other => Err(RulesError::UnknownAction(other.to_owned())),
     }
+}
+
+/// If `candidate.name` opens with a possessive proper-noun prefix (a
+/// capitalized word immediately followed by `'s`/`’s`), returns the
+/// reason to hold it. Widens what gets held, never narrows it: `None`
+/// means this one check found nothing, not that the name is clean --
+/// see this module's own documentation.
+fn possessive_reserved_material_reason(candidate: &AdmittedCandidate) -> Option<String> {
+    let name = candidate.name.as_deref()?;
+    let first_word = name.split_whitespace().next()?;
+    let base = strip_possessive(first_word)?;
+    is_capitalized_word(base).then(|| {
+        format!(
+            "name begins with a possessive proper-noun prefix ({first_word:?}) -- \
+             ORC Reserved Material; the proper noun must be stripped before this \
+             becomes an authoritative rule"
+        )
+    })
+}
+
+fn strip_possessive(word: &str) -> Option<&str> {
+    word.strip_suffix("'s")
+        .or_else(|| word.strip_suffix("\u{2019}s"))
+}
+
+fn is_capitalized_word(word: &str) -> bool {
+    let mut chars = word.chars();
+    chars.next().is_some_and(char::is_uppercase)
+        && chars.all(|c| !c.is_alphabetic() || c.is_lowercase())
 }
 
 fn parse_scope(scope: &str) -> Result<AdmittedCandidate, RulesError> {
@@ -143,7 +209,7 @@ mod tests {
     use base64::Engine;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
-    use crate::domain::{AdmissionError, AdmissionOutcome};
+    use crate::domain::{AdmissionError, AdmissionOutcome, HoldOutcome};
 
     use super::*;
 
@@ -151,6 +217,8 @@ mod tests {
     struct FakeRepository {
         calls: Mutex<Vec<AdmittedCandidate>>,
         result: Option<Result<AdmissionOutcome, AdmissionError>>,
+        held_calls: Mutex<Vec<(AdmittedCandidate, String)>>,
+        hold_result: Option<Result<HoldOutcome, AdmissionError>>,
     }
 
     impl AdmissionRepository for FakeRepository {
@@ -184,10 +252,21 @@ mod tests {
 
         fn hold_candidate(
             &self,
-            _candidate: AdmittedCandidate,
-            _reason: String,
-        ) -> Result<crate::domain::HoldOutcome, AdmissionError> {
-            unimplemented!("not exercised by dispatch tests -- dispatch only ever admits")
+            candidate: AdmittedCandidate,
+            reason: String,
+        ) -> Result<HoldOutcome, AdmissionError> {
+            self.held_calls.lock().unwrap().push((candidate, reason));
+            match &self.hold_result {
+                Some(Ok(outcome)) => Ok(HoldOutcome {
+                    held_id: outcome.held_id,
+                    was_already_processed: outcome.was_already_processed,
+                }),
+                Some(Err(error)) => Err(*error),
+                None => Ok(HoldOutcome {
+                    held_id: Uuid::new_v4(),
+                    was_already_processed: false,
+                }),
+            }
         }
 
         fn resolve_held(
@@ -195,15 +274,15 @@ mod tests {
             _held_id: Uuid,
             _resolution: crate::domain::HoldResolution,
         ) -> Result<crate::domain::ResolutionOutcome, AdmissionError> {
-            unimplemented!("not exercised by dispatch tests -- dispatch only ever admits")
+            unimplemented!("not exercised by dispatch tests -- dispatch only ever holds or admits")
         }
 
         fn get_held(&self, _held_id: Uuid) -> Result<crate::domain::HeldCandidate, AdmissionError> {
-            unimplemented!("not exercised by dispatch tests -- dispatch only ever admits")
+            unimplemented!("not exercised by dispatch tests -- dispatch only ever holds or admits")
         }
 
         fn list_pending_held(&self) -> Result<Vec<crate::domain::HeldCandidate>, AdmissionError> {
-            unimplemented!("not exercised by dispatch tests -- dispatch only ever admits")
+            unimplemented!("not exercised by dispatch tests -- dispatch only ever holds or admits")
         }
     }
 
@@ -347,5 +426,74 @@ mod tests {
             result,
             Err(RulesError::Admission(AdmissionError::InvalidConfidence))
         ));
+    }
+
+    #[test]
+    fn a_possessive_proper_noun_prefix_is_held_for_review_instead_of_admitted() {
+        let repository = FakeRepository::default();
+        let scope = scope_for(&ScopeFixture {
+            name: "Bimbol's Bursting Bunion",
+            ..ScopeFixture::default()
+        });
+
+        let outcome = dispatch(ADMIT_ACTION, &scope, &repository).unwrap();
+
+        assert!(matches!(
+            outcome,
+            DispatchOutcome::Held {
+                was_already_processed: false,
+                ..
+            }
+        ));
+        assert!(repository.calls.lock().unwrap().is_empty());
+        let held_calls = repository.held_calls.lock().unwrap();
+        assert_eq!(
+            held_calls[0].0.name.as_deref(),
+            Some("Bimbol's Bursting Bunion")
+        );
+        assert!(held_calls[0].1.contains("Bimbol's"));
+    }
+
+    #[test]
+    fn the_book_s_own_curly_apostrophe_is_recognized_too() {
+        let repository = FakeRepository::default();
+        let scope = scope_for(&ScopeFixture {
+            name: "Kyra\u{2019}s Radiant Blast",
+            ..ScopeFixture::default()
+        });
+
+        let outcome = dispatch(ADMIT_ACTION, &scope, &repository).unwrap();
+
+        assert!(matches!(outcome, DispatchOutcome::Held { .. }));
+    }
+
+    #[test]
+    fn a_generic_name_with_no_possessive_prefix_is_admitted_normally() {
+        let repository = FakeRepository::default();
+        let scope = scope_for(&ScopeFixture {
+            name: "Bursting Bunion",
+            ..ScopeFixture::default()
+        });
+
+        let outcome = dispatch(ADMIT_ACTION, &scope, &repository).unwrap();
+
+        assert!(matches!(outcome, DispatchOutcome::Admitted { .. }));
+        assert!(repository.held_calls.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_lowercase_possessive_word_is_not_mistaken_for_a_proper_noun() {
+        // "someone's" is a possessive, but not a *proper* noun -- the
+        // book's own generic phrasing must not be held on that basis
+        // alone.
+        let repository = FakeRepository::default();
+        let scope = scope_for(&ScopeFixture {
+            name: "someone's Item",
+            ..ScopeFixture::default()
+        });
+
+        let outcome = dispatch(ADMIT_ACTION, &scope, &repository).unwrap();
+
+        assert!(matches!(outcome, DispatchOutcome::Admitted { .. }));
     }
 }
