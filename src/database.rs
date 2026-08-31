@@ -53,6 +53,9 @@ impl Database {
         connection
             .batch_execute(include_str!("../migrations/0001_init.sql"))
             .map_err(|error| DatabaseError::Query(error.to_string()))?;
+        connection
+            .batch_execute(include_str!("../migrations/0002_held_candidates.sql"))
+            .map_err(|error| DatabaseError::Query(error.to_string()))?;
         Ok(())
     }
 

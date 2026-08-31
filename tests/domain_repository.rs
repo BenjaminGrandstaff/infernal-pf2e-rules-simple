@@ -5,7 +5,8 @@
 
 use infernal_pf2e_rules_simple::database::Database;
 use infernal_pf2e_rules_simple::domain::{
-    AdmissionError, AdmissionRepository, AdmittedCandidate, RuleType, SourceProvenance,
+    AdmissionError, AdmissionRepository, AdmittedCandidate, HoldResolution, ResolutionOutcome,
+    RuleType, SourceProvenance,
 };
 use infernal_pf2e_rules_simple::postgres_rules_repository::PostgresRulesRepository;
 use uuid::Uuid;
@@ -155,4 +156,143 @@ fn a_committed_rule_survives_reconnecting_a_fresh_repository() {
 
     assert_eq!(rule.name.as_deref(), Some("Stride"));
     assert_eq!(rule.version, outcome.version);
+}
+
+#[test]
+#[ignore = "requires PF2E_RULES_DATABASE_URL and PostgreSQL"]
+fn a_new_candidate_is_held_for_review_rather_than_admitted() {
+    let repository = repository();
+
+    let outcome = repository
+        .hold_candidate(
+            candidate(Uuid::new_v4(), Some("Kyra's Radiant Blast"), 0.9),
+            "possible proper noun in name".to_owned(),
+        )
+        .unwrap();
+
+    assert!(!outcome.was_already_processed);
+    let held = repository.get_held(outcome.held_id).unwrap();
+    assert_eq!(held.candidate.name.as_deref(), Some("Kyra's Radiant Blast"));
+    assert_eq!(held.reason, "possible proper noun in name");
+
+    // Held, not admitted -- no rule exists for it yet.
+    let pending = repository.list_pending_held().unwrap();
+    assert!(pending.iter().any(|entry| entry.held_id == outcome.held_id));
+}
+
+#[test]
+#[ignore = "requires PF2E_RULES_DATABASE_URL and PostgreSQL"]
+fn reholding_the_same_candidate_id_never_creates_a_second_queue_entry() {
+    let repository = repository();
+    let candidate = candidate(Uuid::new_v4(), Some("Suspect Name"), 0.9);
+
+    let first = repository
+        .hold_candidate(candidate.clone(), "reason".to_owned())
+        .unwrap();
+    assert!(!first.was_already_processed);
+
+    let retried = repository
+        .hold_candidate(candidate, "a different reason".to_owned())
+        .unwrap();
+
+    assert!(retried.was_already_processed);
+    assert_eq!(retried.held_id, first.held_id);
+}
+
+#[test]
+#[ignore = "requires PF2E_RULES_DATABASE_URL and PostgreSQL"]
+fn resolving_a_held_candidate_to_admit_creates_exactly_the_rule_admit_candidate_would() {
+    let repository = repository();
+    let held = repository
+        .hold_candidate(
+            candidate(Uuid::new_v4(), Some("Bursting Bunion"), 0.9),
+            "stripped a possessive proper noun".to_owned(),
+        )
+        .unwrap();
+
+    let outcome = repository
+        .resolve_held(held.held_id, HoldResolution::Admit)
+        .unwrap();
+
+    let ResolutionOutcome::Admitted(admission) = outcome else {
+        panic!("expected Admitted, got {outcome:?}");
+    };
+    assert!(!admission.was_already_processed);
+    let rule = repository.get(admission.rule_id, None).unwrap();
+    assert_eq!(rule.name.as_deref(), Some("Bursting Bunion"));
+
+    // No longer part of the pending queue.
+    let pending = repository.list_pending_held().unwrap();
+    assert!(!pending.iter().any(|entry| entry.held_id == held.held_id));
+}
+
+#[test]
+#[ignore = "requires PF2E_RULES_DATABASE_URL and PostgreSQL"]
+fn resolving_a_held_candidate_to_discard_never_creates_a_rule() {
+    let repository = repository();
+    let held = repository
+        .hold_candidate(
+            candidate(Uuid::new_v4(), Some("Pure Lore Text"), 0.9),
+            "flavor text, not a mechanic".to_owned(),
+        )
+        .unwrap();
+
+    let outcome = repository
+        .resolve_held(held.held_id, HoldResolution::Discard)
+        .unwrap();
+
+    assert!(matches!(outcome, ResolutionOutcome::Discarded));
+    let pending = repository.list_pending_held().unwrap();
+    assert!(!pending.iter().any(|entry| entry.held_id == held.held_id));
+}
+
+#[test]
+#[ignore = "requires PF2E_RULES_DATABASE_URL and PostgreSQL"]
+fn resolving_the_same_held_candidate_to_admit_twice_never_creates_a_second_rule() {
+    let repository = repository();
+    let held = repository
+        .hold_candidate(
+            candidate(Uuid::new_v4(), Some("Idempotent Strike"), 0.9),
+            "reason".to_owned(),
+        )
+        .unwrap();
+
+    let first = repository
+        .resolve_held(held.held_id, HoldResolution::Admit)
+        .unwrap();
+    let retried = repository
+        .resolve_held(held.held_id, HoldResolution::Admit)
+        .unwrap();
+
+    let (ResolutionOutcome::Admitted(first), ResolutionOutcome::Admitted(retried)) =
+        (first, retried)
+    else {
+        panic!("expected both resolutions to be Admitted");
+    };
+    assert!(!first.was_already_processed);
+    assert!(retried.was_already_processed);
+    assert_eq!(retried.rule_id, first.rule_id);
+    assert_eq!(retried.version, first.version);
+}
+
+#[test]
+#[ignore = "requires PF2E_RULES_DATABASE_URL and PostgreSQL"]
+fn resolving_an_already_discarded_candidate_to_admit_is_a_conflict_not_a_silent_admission() {
+    let repository = repository();
+    let held = repository
+        .hold_candidate(
+            candidate(Uuid::new_v4(), Some("Contested"), 0.9),
+            "reason".to_owned(),
+        )
+        .unwrap();
+    repository
+        .resolve_held(held.held_id, HoldResolution::Discard)
+        .unwrap();
+
+    let result = repository.resolve_held(held.held_id, HoldResolution::Admit);
+
+    assert!(matches!(result, Err(AdmissionError::ConflictingResolution)));
+    // Still no rule -- the conflicting call must not have admitted it.
+    let pending = repository.list_pending_held().unwrap();
+    assert!(!pending.iter().any(|entry| entry.held_id == held.held_id));
 }

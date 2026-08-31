@@ -14,7 +14,8 @@ use std::sync::Mutex;
 
 use infernal_pf2e_rules_simple::claims::{ClaimOutcome, CompleteOutcome, WorkClaim};
 use infernal_pf2e_rules_simple::domain::{
-    AdmissionError, AdmissionOutcome, AdmissionRepository, AdmittedCandidate, Rule,
+    AdmissionError, AdmissionOutcome, AdmissionRepository, AdmittedCandidate, HeldCandidate,
+    HoldOutcome, HoldResolution, ResolutionOutcome, Rule,
 };
 use infernal_pf2e_rules_simple::error::RulesError;
 use infernal_pf2e_rules_simple::kernel_client::KernelPort;
@@ -95,6 +96,30 @@ impl AdmissionRepository for FakeRepository {
 
     fn get(&self, _rule_id: Uuid, _version: Option<i64>) -> Result<Rule, AdmissionError> {
         unimplemented!("not exercised by work_once")
+    }
+
+    fn hold_candidate(
+        &self,
+        _candidate: AdmittedCandidate,
+        _reason: String,
+    ) -> Result<HoldOutcome, AdmissionError> {
+        unimplemented!("not exercised by work_once -- dispatch only ever admits")
+    }
+
+    fn resolve_held(
+        &self,
+        _held_id: Uuid,
+        _resolution: HoldResolution,
+    ) -> Result<ResolutionOutcome, AdmissionError> {
+        unimplemented!("not exercised by work_once -- dispatch only ever admits")
+    }
+
+    fn get_held(&self, _held_id: Uuid) -> Result<HeldCandidate, AdmissionError> {
+        unimplemented!("not exercised by work_once -- dispatch only ever admits")
+    }
+
+    fn list_pending_held(&self) -> Result<Vec<HeldCandidate>, AdmissionError> {
+        unimplemented!("not exercised by work_once -- dispatch only ever admits")
     }
 }
 

@@ -127,6 +127,40 @@ pub struct AdmissionOutcome {
     pub was_already_processed: bool,
 }
 
+/// A candidate held for human review rather than admitted or rejected
+/// outright -- the third admission outcome this module previously had
+/// no room for (see this repository's `ORC-NOTICE.md`, "Known
+/// limitation: Reserved Material is not yet filtered": something has
+/// to receive a candidate that might carry Reserved Material without
+/// either trusting it as a rule or discarding it unreviewably). A held
+/// candidate never becomes a `Rule` on its own; only
+/// `AdmissionRepository::resolve_held` can turn it into one, or
+/// discard it permanently.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HeldCandidate {
+    pub held_id: Uuid,
+    pub candidate: AdmittedCandidate,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct HoldOutcome {
+    pub held_id: Uuid,
+    pub was_already_processed: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HoldResolution {
+    Admit,
+    Discard,
+}
+
+#[derive(Clone, Debug)]
+pub enum ResolutionOutcome {
+    Admitted(AdmissionOutcome),
+    Discarded,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AdmissionError {
     /// `confidence` was outside `[0.0, 1.0]` -- a structurally invalid
@@ -136,6 +170,12 @@ pub enum AdmissionError {
     /// candidate whose producer cannot be identified for provenance.
     MissingParserVersion,
     NotFound,
+    /// `resolve_held` was called for a `held_id` that was already
+    /// resolved, with a *different* `HoldResolution` than the one it
+    /// was actually resolved with. Resolving it again with the *same*
+    /// resolution is not an error -- see `resolve_held`'s own
+    /// documentation on why that has to stay idempotent too.
+    ConflictingResolution,
     Repository,
 }
 
@@ -149,6 +189,8 @@ impl Display for AdmissionError {
                 formatter.write_str("candidate must record a non-empty parser_version")
             }
             Self::NotFound => formatter.write_str("rule was not found"),
+            Self::ConflictingResolution => formatter
+                .write_str("held candidate was already resolved with a different resolution"),
             Self::Repository => formatter.write_str("admission repository operation failed"),
         }
     }
@@ -167,4 +209,37 @@ pub trait AdmissionRepository {
     ) -> Result<AdmissionOutcome, AdmissionError>;
 
     fn get(&self, rule_id: Uuid, version: Option<i64>) -> Result<Rule, AdmissionError>;
+
+    /// Validates and holds `candidate` for human review under `reason`,
+    /// or recognizes a prior hold of the same `candidate_id` -- the
+    /// same idempotency guarantee `admit_candidate` gives, so a retried
+    /// hold never creates a second entry in the review queue. Structural
+    /// validation (`confidence` range, non-empty `parser_version`) still
+    /// applies: a held candidate is uncertain in *content*, not
+    /// malformed.
+    fn hold_candidate(
+        &self,
+        candidate: AdmittedCandidate,
+        reason: String,
+    ) -> Result<HoldOutcome, AdmissionError>;
+
+    /// Resolves a previously held candidate into either an admitted
+    /// rule or a permanent discard. Idempotent: resolving the same
+    /// `held_id` to the same `resolution` again recognizes the prior
+    /// resolution rather than erroring or double-admitting; resolving
+    /// it to a *different* resolution than what already happened is
+    /// `AdmissionError::ConflictingResolution`, never a silent
+    /// overwrite of what a human already decided.
+    fn resolve_held(
+        &self,
+        held_id: Uuid,
+        resolution: HoldResolution,
+    ) -> Result<ResolutionOutcome, AdmissionError>;
+
+    fn get_held(&self, held_id: Uuid) -> Result<HeldCandidate, AdmissionError>;
+
+    /// Lists every held candidate still awaiting resolution -- the
+    /// review queue a human (or a future, stricter automated pass)
+    /// works from.
+    fn list_pending_held(&self) -> Result<Vec<HeldCandidate>, AdmissionError>;
 }

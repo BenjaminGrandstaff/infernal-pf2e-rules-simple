@@ -181,6 +181,30 @@ mod tests {
         ) -> Result<crate::domain::Rule, AdmissionError> {
             unimplemented!("not exercised by dispatch tests")
         }
+
+        fn hold_candidate(
+            &self,
+            _candidate: AdmittedCandidate,
+            _reason: String,
+        ) -> Result<crate::domain::HoldOutcome, AdmissionError> {
+            unimplemented!("not exercised by dispatch tests -- dispatch only ever admits")
+        }
+
+        fn resolve_held(
+            &self,
+            _held_id: Uuid,
+            _resolution: crate::domain::HoldResolution,
+        ) -> Result<crate::domain::ResolutionOutcome, AdmissionError> {
+            unimplemented!("not exercised by dispatch tests -- dispatch only ever admits")
+        }
+
+        fn get_held(&self, _held_id: Uuid) -> Result<crate::domain::HeldCandidate, AdmissionError> {
+            unimplemented!("not exercised by dispatch tests -- dispatch only ever admits")
+        }
+
+        fn list_pending_held(&self) -> Result<Vec<crate::domain::HeldCandidate>, AdmissionError> {
+            unimplemented!("not exercised by dispatch tests -- dispatch only ever admits")
+        }
     }
 
     struct ScopeFixture {
