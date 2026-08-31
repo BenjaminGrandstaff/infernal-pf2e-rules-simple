@@ -121,6 +121,38 @@ a new `rule_id` at version 1 -- there is no reliable identity to chain
 it onto. See `domain.rs`'s own module documentation and
 `tests/domain_repository.rs`.
 
+## Held candidates and Reserved Material
+
+Admission is not strictly binary. A structurally valid candidate whose
+`name` opens with a possessive proper-noun prefix (ORC's own named
+example: "Bimbol's Bursting Bunion") is held for human review instead
+of admitted or rejected outright -- see `dispatch.rs`'s own module
+documentation and [ORC-NOTICE.md](ORC-NOTICE.md). A held candidate
+never becomes a rule on its own; a human resolves it later, either into
+an admitted rule or a permanent discard.
+
+`cargo run --bin review` is the terminal interface to that queue. It
+connects straight to `PF2E_RULES_DATABASE_URL` -- the same trust
+boundary as already having database or cluster access, no new network
+listener or auth surface:
+
+```sh
+cargo run --bin review -- list
+cargo run --bin review -- show <held_id>
+cargo run --bin review -- admit <held_id>
+cargo run --bin review -- discard <held_id>
+```
+
+Both `admit` and `discard` are idempotent: resolving the same
+`held_id` to the same resolution twice recognizes the prior resolution
+rather than double-admitting; resolving it to a *different* resolution
+than what already happened is a reported conflict, never a silent
+overwrite of what a human already decided.
+
+This one check is deliberately narrow, not comprehensive Reserved
+Material filtering -- see ORC-NOTICE.md's "Known limitation" section
+for what still passes through undetected.
+
 ## Cross-service failure: admission not confirmed
 
 This is the same distributed-transaction boundary
