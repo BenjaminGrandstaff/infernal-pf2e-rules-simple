@@ -286,4 +286,7 @@ database.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). This applies to the software only --
+Pathfinder Second Edition rule content this service admits and stores
+is Licensed Material under the Open RPG Creative License; see
+[ORC-NOTICE.md](ORC-NOTICE.md).
