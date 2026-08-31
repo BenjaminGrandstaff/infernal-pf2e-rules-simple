@@ -33,26 +33,31 @@ store or admit Reserved Material as rule data.
 None. This project does not designate any additional Reserved
 Material as Licensed Material.
 
-## Known limitation: Reserved Material is not yet filtered
+## Known limitation: Reserved Material filtering is narrow, not complete
 
-The commitment above is a policy, not yet an enforced one. Neither
-this service's admission validation (`dispatch.rs`, `domain.rs`) nor
-`infernal-pf2e-parser-simple`'s extraction (`parser.rs`) currently
-detects or strips proper nouns and other Reserved Material from a
-candidate's `name`, `trigger`, or `effect` text -- those fields are
-validated for structure (rule type, confidence range, provenance) and
-otherwise stored verbatim. ORC's own guidance for a possessive-proper-
-noun mechanic name (e.g. "Bimbol's Bursting Bunion") is to delete the
-proper noun and keep the generic name ("Bursting Bunion"); no such
-stripping exists yet on either hop.
+The commitment above is only partly enforced. `dispatch.rs` holds a
+candidate for human review (`domain.rs`'s `HeldCandidate`/
+`hold_candidate`/`resolve_held`) instead of admitting it when `name`
+opens with a possessive proper-noun prefix -- ORC's own named example
+("Bimbol's Bursting Bunion", which a licensee is told to rewrite as
+"Bursting Bunion"). That one pattern is held, never auto-admitted and
+never auto-stripped: rewriting a candidate's content on the book's
+behalf without a human confirming the result would be its own kind of
+guess, so a held candidate waits for `resolve_held` either way.
 
-This is a real, current gap, not a silent risk: only synthetic test
-fixtures have been admitted so far (see this repository's README,
-"Status"), so no actual Reserved Material has passed through this
-pipeline to date. It must be addressed -- in the Parser's extraction,
-this service's admission validation, or both -- before any real Paizo
-source text is fed through the pipeline, not worked around after the
-fact.
+That is the *only* pattern detected. A proper noun with no possessive
+marker at all -- a monster literally named after a setting NPC, a
+place name, a trademarked term embedded mid-`effect` rather than at
+the start of `name` -- passes through this check undetected and is
+admitted normally. `infernal-pf2e-parser-simple`'s own extraction
+(`parser.rs`, `book_adapter.rs`) does no Reserved Material filtering
+either; it only reformats book text into `parser.rs`'s grammar.
+
+This narrows the gap; it does not close it. Before any real Paizo
+source text is fed through the pipeline at volume, the undetected
+cases above still need a real answer -- a curated denylist of known
+Reserved terms, broader heuristics, or a mandatory review step for
+every candidate above some confidence -- not just this one check.
 
 ## Scope of this notice
 
