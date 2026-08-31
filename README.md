@@ -209,6 +209,19 @@ service must not become.
   database and from `infernal-pf2e-parser-simple`'s own database.
 - `HEALTH_ADDRESS` (default `0.0.0.0:8090`)
 
+## Status
+
+Verified live 2026-08-31 against a real kind-deployed kernel, evaluator,
+and both PF2e services' own isolated PostgreSQL instances: this service
+claimed a real `pf2e.rules.admit` Request submitted by a live
+`infernal-pf2e-parser-simple` Deployment (itself triggered by a separate
+Requester identity's signed `pf2e.parse` submission) and admitted it as
+a new authoritative rule, version 1. The `candidate_id` recorded here
+matched exactly the Parser's own retry-cache record for the same
+candidate, and `infernal-law`'s own database contained zero
+PF2e-specific tables afterward. See `infernal-pf2e-parser-simple`'s
+`tests/live_requester_submission.rs` for the driving test.
+
 ## Development
 
 ```sh
